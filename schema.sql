@@ -51,3 +51,55 @@ INSERT INTO tasks (project_id, title, description, status)
 SELECT id, 'Виправити помилку foreign key при створенні співробітника', 'Підозра на застарілий закешований department_id у браузері', 'in_progress'
 FROM projects WHERE name = 'Графік змін (schedule-app)'
 ON CONFLICT DO NOTHING;
+
+-- ============================================================
+-- ikorka-sysadmin (equipment + task panel)
+-- No real inventory/employee data here on purpose — this file is
+-- committed to a public repo. Real rows go in through the app
+-- (POST /api/equipment etc.), which only ever touches the DB
+-- directly, never the git history.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS equipment (
+  id SERIAL PRIMARY KEY,
+  cat TEXT NOT NULL DEFAULT 'other',      -- laptop | headset | mouse | other
+  name TEXT NOT NULL,
+  inv TEXT,                                -- inventory number
+  owner TEXT,                              -- location / holder
+  status TEXT NOT NULL DEFAULT 'storage',  -- working | storage | repair | decommissioned
+  last_check DATE,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS equipment_log (
+  id SERIAL PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  action TEXT NOT NULL,   -- created | status_changed | deleted
+  item TEXT NOT NULL,
+  detail TEXT,
+  author_role TEXT
+);
+
+CREATE TABLE IF NOT EXISTS daily_tasks (
+  id SERIAL PRIMARY KEY,
+  text TEXT NOT NULL,
+  done BOOLEAN NOT NULL DEFAULT false,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS assigned_tasks (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  from_user TEXT,
+  status TEXT NOT NULL DEFAULT 'queued', -- queued | active | done
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_equipment_log_ts ON equipment_log(ts);
+CREATE INDEX IF NOT EXISTS idx_assigned_tasks_status ON assigned_tasks(status);
+
+-- No INSERT statements here on purpose — see note above.

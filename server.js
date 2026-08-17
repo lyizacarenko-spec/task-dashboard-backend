@@ -16,11 +16,13 @@ const pool = new Pool({
 
 const OWNER_PIN = process.env.OWNER_PIN || '0000';
 const MANAGER_PIN = process.env.MANAGER_PIN || '1111';
+const SYSADMIN_PIN = process.env.SYSADMIN_PIN || '2222';
 
 // --- auth: PIN comes in header 'x-pin', resolves to a role ---
 function resolveRole(pin) {
   if (pin === OWNER_PIN) return 'owner';
   if (pin === MANAGER_PIN) return 'manager';
+  if (pin === SYSADMIN_PIN) return 'sysadmin';
   return null;
 }
 
@@ -176,6 +178,144 @@ app.post('/api/quick-update', requireRole('owner'), async (req, res) => {
     }
   }
   res.json({ results });
+});
+
+// ============================================================
+// Sysadmin dashboard (ikorka-sysadmin) — equipment + task panel
+// Accessible to 'owner' (sees everything) and 'sysadmin'
+// (own panel only, same endpoints, same permissions here).
+// ============================================================
+const sysadminRoles = ['owner', 'sysadmin'];
+
+// --- equipment ---
+app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM equipment ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
+  const { cat, name, inv, owner, status, note } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+  const r = await pool.query(
+    `INSERT INTO equipment (cat, name, inv, owner, status, last_check, note)
+     VALUES ($1,$2,$3,$4,$5, CURRENT_DATE, $6) RETURNING *`,
+    [cat || 'other', name.trim(), inv || null, owner || null, status || 'storage', note || null]
+  );
+  await pool.query(
+    'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+    ['created', r.rows[0].name, inv || '', req.role]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
+  const { cat, name, inv, owner, status, note, touchLastCheck } = req.body;
+  const r = await pool.query(
+    `UPDATE equipment SET
+       cat = COALESCE($1, cat),
+       name = COALESCE($2, name),
+       inv = COALESCE($3, inv),
+       owner = COALESCE($4, owner),
+       status = COALESCE($5, status),
+       note = COALESCE($6, note),
+       last_check = CASE WHEN $7 THEN CURRENT_DATE ELSE last_check END
+     WHERE id = $8 RETURNING *`,
+    [cat, name, inv, owner, status, note, !!touchLastCheck, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  if (status) {
+    await pool.query(
+      'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+      ['status_changed', r.rows[0].name, status, req.role]
+    );
+  }
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('DELETE FROM equipment WHERE id = $1 RETURNING *', [req.params.id]);
+  if (r.rows[0]) {
+    await pool.query(
+      'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+      ['deleted', r.rows[0].name, r.rows[0].inv || '', req.role]
+    );
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/equipment-log', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM equipment_log ORDER BY ts DESC LIMIT 200');
+  res.json(r.rows);
+});
+
+// --- daily tasks (today's checklist, resets manually) ---
+app.get('/api/daily-tasks', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM daily_tasks ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/daily-tasks', requireRole(...sysadminRoles), async (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ error: 'text_required' });
+  const r = await pool.query(
+    'INSERT INTO daily_tasks (text, done) VALUES ($1, false) RETURNING *',
+    [text.trim()]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/daily-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
+  const { done } = req.body;
+  const r = await pool.query(
+    `UPDATE daily_tasks SET done = $1, completed_at = CASE WHEN $1 THEN now() ELSE NULL END
+     WHERE id = $2 RETURNING *`,
+    [!!done, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/daily-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
+  await pool.query('DELETE FROM daily_tasks WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// --- assigned tasks (time-tracked, set by owner, worked by sysadmin) ---
+app.get('/api/assigned-tasks', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM assigned_tasks ORDER BY created_at DESC');
+  res.json(r.rows);
+});
+
+app.post('/api/assigned-tasks', requireRole('owner'), async (req, res) => {
+  const { title, from_user } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: 'title_required' });
+  const r = await pool.query(
+    `INSERT INTO assigned_tasks (title, from_user, status) VALUES ($1,$2,'queued') RETURNING *`,
+    [title.trim(), from_user || null]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
+  const { status } = req.body;
+  if (!['queued', 'active', 'done'].includes(status)) {
+    return res.status(400).json({ error: 'invalid_status' });
+  }
+  const r = await pool.query(
+    `UPDATE assigned_tasks SET
+       status = $1,
+       started_at = CASE WHEN $1 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
+       finished_at = CASE WHEN $1 = 'done' THEN now() ELSE finished_at END
+     WHERE id = $2 RETURNING *`,
+    [status, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+  await pool.query('DELETE FROM assigned_tasks WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
