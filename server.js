@@ -208,6 +208,26 @@ app.post('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
   res.json(r.rows[0]);
 });
 
+// bulk inventory check: mark last_check = today for a batch of ids at once
+// (used by the "Почати інвентаризацію" flow — one request instead of N).
+// Must be declared BEFORE '/api/equipment/:id' — otherwise Express would
+// match "bulk-check" as an :id on the param route above it.
+app.patch('/api/equipment/bulk-check', requireRole(...sysadminRoles), async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids_must_be_nonempty_array' });
+  }
+  const r = await pool.query(
+    'UPDATE equipment SET last_check = CURRENT_DATE WHERE id = ANY($1::int[]) RETURNING *',
+    [ids]
+  );
+  await pool.query(
+    'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+    ['inventory_check', `${r.rows.length} одиниць`, 'Перевірено на місці', req.role]
+  );
+  res.json(r.rows);
+});
+
 app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
   const { cat, name, inv, owner, status, note, touchLastCheck } = req.body;
   const r = await pool.query(
@@ -265,11 +285,19 @@ app.post('/api/daily-tasks', requireRole(...sysadminRoles), async (req, res) => 
 });
 
 app.patch('/api/daily-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { done } = req.body;
+  const { done, text } = req.body;
+  if (text !== undefined && !text.trim()) return res.status(400).json({ error: 'text_required' });
   const r = await pool.query(
-    `UPDATE daily_tasks SET done = $1, completed_at = CASE WHEN $1 THEN now() ELSE NULL END
-     WHERE id = $2 RETURNING *`,
-    [!!done, req.params.id]
+    `UPDATE daily_tasks SET
+       text = COALESCE($1, text),
+       done = COALESCE($2, done),
+       completed_at = CASE
+         WHEN $2 IS NULL THEN completed_at
+         WHEN $2 THEN now()
+         ELSE NULL
+       END
+     WHERE id = $3 RETURNING *`,
+    [text !== undefined ? text.trim() : null, done !== undefined ? !!done : null, req.params.id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
@@ -296,18 +324,24 @@ app.post('/api/assigned-tasks', requireRole('owner'), async (req, res) => {
   res.json(r.rows[0]);
 });
 
+// owner can rename the task; both roles can move it through queued/active/done
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { status } = req.body;
-  if (!['queued', 'active', 'done'].includes(status)) {
+  const { status, title } = req.body;
+  if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
+  }
+  if (title !== undefined) {
+    if (req.role !== 'owner') return res.status(403).json({ error: 'only_owner_can_rename' });
+    if (!title.trim()) return res.status(400).json({ error: 'title_required' });
   }
   const r = await pool.query(
     `UPDATE assigned_tasks SET
-       status = $1,
-       started_at = CASE WHEN $1 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
-       finished_at = CASE WHEN $1 = 'done' THEN now() ELSE finished_at END
-     WHERE id = $2 RETURNING *`,
-    [status, req.params.id]
+       title = COALESCE($1, title),
+       status = COALESCE($2, status),
+       started_at = CASE WHEN $2 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
+       finished_at = CASE WHEN $2 = 'done' THEN now() ELSE finished_at END
+     WHERE id = $3 RETURNING *`,
+    [title !== undefined ? title.trim() : null, status || null, req.params.id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
