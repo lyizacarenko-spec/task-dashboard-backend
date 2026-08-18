@@ -539,6 +539,47 @@ app.delete('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, re
   res.json({ ok: true });
 });
 
+// --- Luiza's project registry (4th tab, owner-only) ---
+app.get('/api/luiza/projects', requireRole('owner'), async (req, res) => {
+  const r = await pool.query('SELECT * FROM luiza_projects ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/luiza/projects', requireRole('owner'), async (req, res) => {
+  const { name, description, repo_url, live_url, tech_stack, status, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+  const r = await pool.query(
+    `INSERT INTO luiza_projects (name, description, repo_url, live_url, tech_stack, status, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [name.trim(), description || null, repo_url || null, live_url || null, tech_stack || null, status || 'active', notes || null]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/luiza/projects/:id', requireRole('owner'), async (req, res) => {
+  const { name, description, repo_url, live_url, tech_stack, status, notes } = req.body;
+  const r = await pool.query(
+    `UPDATE luiza_projects SET
+       name = COALESCE($1, name),
+       description = COALESCE($2, description),
+       repo_url = COALESCE($3, repo_url),
+       live_url = COALESCE($4, live_url),
+       tech_stack = COALESCE($5, tech_stack),
+       status = COALESCE($6, status),
+       notes = COALESCE($7, notes),
+       updated_at = now()
+     WHERE id = $8 RETURNING *`,
+    [name, description, repo_url, live_url, tech_stack, status, notes, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/luiza/projects/:id', requireRole('owner'), async (req, res) => {
+  await pool.query('DELETE FROM luiza_projects WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;

@@ -155,3 +155,22 @@ CREATE TABLE IF NOT EXISTS luiza_assigned_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_luiza_assigned_tasks_status ON luiza_assigned_tasks(status);
+
+-- ============================================================
+-- luiza-personal: projects registry (4th tab, ikorka-luiza)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS luiza_projects (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  repo_url TEXT,
+  live_url TEXT,
+  tech_stack TEXT,
+  status TEXT NOT NULL DEFAULT 'active', -- active | done | archived
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_luiza_projects_status ON luiza_projects(status);
