@@ -256,6 +256,12 @@ app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) 
       ['status_changed', r.rows[0].name, status, req.role]
     );
   }
+  if (zone) {
+    await pool.query(
+      'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+      ['zone_changed', r.rows[0].name, zone, req.role]
+    );
+  }
   res.json(r.rows[0]);
 });
 
