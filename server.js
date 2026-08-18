@@ -277,8 +277,28 @@ app.delete('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res)
 });
 
 app.get('/api/equipment-log', requireRole(...sysadminRoles), async (req, res) => {
-  const r = await pool.query('SELECT * FROM equipment_log ORDER BY ts DESC LIMIT 200');
+  const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
+  const r = await pool.query('SELECT * FROM equipment_log ORDER BY ts DESC LIMIT $1', [limit]);
   res.json(r.rows);
+});
+
+// manual entry for something that happened outside the app (e.g. logging
+// yesterday's physical repair today) — `ts` is optional and defaults to
+// now(), but can be set explicitly to backdate the entry.
+app.post('/api/equipment-log', requireRole(...sysadminRoles), async (req, res) => {
+  const { action, item, detail, ts } = req.body;
+  if (!item || !item.trim()) return res.status(400).json({ error: 'item_required' });
+  const r = await pool.query(
+    `INSERT INTO equipment_log (ts, action, item, detail, author_role)
+     VALUES (COALESCE($1, now()), $2, $3, $4, $5) RETURNING *`,
+    [ts || null, action || 'manual', item.trim(), detail || null, req.role]
+  );
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/equipment-log/:id', requireRole('owner'), async (req, res) => {
+  await pool.query('DELETE FROM equipment_log WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 // --- daily tasks (today's checklist, resets manually) ---
@@ -298,19 +318,26 @@ app.post('/api/daily-tasks', requireRole(...sysadminRoles), async (req, res) => 
 });
 
 app.patch('/api/daily-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { done, text } = req.body;
+  const { done, text, completed_at } = req.body;
   if (text !== undefined && !text.trim()) return res.status(400).json({ error: 'text_required' });
   const r = await pool.query(
     `UPDATE daily_tasks SET
        text = COALESCE($1, text),
        done = COALESCE($2, done),
        completed_at = CASE
+         WHEN $4 THEN $3
          WHEN $2 IS NULL THEN completed_at
-         WHEN $2 THEN now()
+         WHEN $2 THEN COALESCE(completed_at, now())
          ELSE NULL
        END
-     WHERE id = $3 RETURNING *`,
-    [text !== undefined ? text.trim() : null, done !== undefined ? !!done : null, req.params.id]
+     WHERE id = $5 RETURNING *`,
+    [
+      text !== undefined ? text.trim() : null,
+      done !== undefined ? !!done : null,
+      completed_at || null,
+      completed_at !== undefined,
+      req.params.id,
+    ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
