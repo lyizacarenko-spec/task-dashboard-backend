@@ -429,6 +429,116 @@ app.delete('/api/assets/:id', requireRole(...sysadminRoles), async (req, res) =>
   res.json({ ok: true });
 });
 
+// ============================================================
+// Luiza's personal panel — owner-only, nothing here is visible to
+// sysadmin/manager roles. Same shape as the sysadmin daily/assigned
+// tables but a separate pair so the two don't mix.
+// ============================================================
+
+app.get('/api/luiza/daily-tasks', requireRole('owner'), async (req, res) => {
+  const r = await pool.query('SELECT * FROM luiza_daily_tasks ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/luiza/daily-tasks', requireRole('owner'), async (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ error: 'text_required' });
+  const r = await pool.query(
+    'INSERT INTO luiza_daily_tasks (text, done) VALUES ($1, false) RETURNING *',
+    [text.trim()]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) => {
+  const { done, text, completed_at } = req.body;
+  if (text !== undefined && !text.trim()) return res.status(400).json({ error: 'text_required' });
+  const r = await pool.query(
+    `UPDATE luiza_daily_tasks SET
+       text = COALESCE($1, text),
+       done = COALESCE($2, done),
+       completed_at = CASE
+         WHEN $4 THEN $3
+         WHEN $2 IS NULL THEN completed_at
+         WHEN $2 THEN COALESCE(completed_at, now())
+         ELSE NULL
+       END
+     WHERE id = $5 RETURNING *`,
+    [
+      text !== undefined ? text.trim() : null,
+      done !== undefined ? !!done : null,
+      completed_at || null,
+      completed_at !== undefined,
+      req.params.id,
+    ]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) => {
+  await pool.query('DELETE FROM luiza_daily_tasks WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get('/api/luiza/assigned-tasks', requireRole('owner'), async (req, res) => {
+  const r = await pool.query('SELECT * FROM luiza_assigned_tasks ORDER BY created_at DESC');
+  res.json(r.rows);
+});
+
+app.post('/api/luiza/assigned-tasks', requireRole('owner'), async (req, res) => {
+  const { title, from_user } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: 'title_required' });
+  const r = await pool.query(
+    `INSERT INTO luiza_assigned_tasks (title, from_user, status) VALUES ($1,$2,'queued') RETURNING *`,
+    [title.trim(), from_user || null]
+  );
+  res.json(r.rows[0]);
+});
+
+// status transitions auto-stamp started_at/finished_at unless an explicit
+// override is passed (backdating something that was actually done earlier)
+app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+  const { status, title, from_user, started_at, finished_at } = req.body;
+  if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
+    return res.status(400).json({ error: 'invalid_status' });
+  }
+  const r = await pool.query(
+    `UPDATE luiza_assigned_tasks SET
+       title = COALESCE($1, title),
+       from_user = COALESCE($2, from_user),
+       status = COALESCE($3, status),
+       started_at = CASE
+         WHEN $5 THEN $4
+         WHEN $3 = 'active' AND started_at IS NULL THEN now()
+         ELSE started_at
+       END,
+       finished_at = CASE
+         WHEN $7 THEN $6
+         WHEN $3 = 'done' THEN now()
+         ELSE finished_at
+       END
+     WHERE id = $8 RETURNING *`,
+    [
+      title !== undefined ? title.trim() : null,
+      from_user !== undefined ? from_user : null,
+      status || null,
+      started_at || null,
+      started_at !== undefined,
+      finished_at || null,
+      finished_at !== undefined,
+      req.params.id,
+    ]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+  await pool.query('DELETE FROM luiza_assigned_tasks WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;

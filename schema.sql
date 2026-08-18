@@ -129,3 +129,29 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
+
+-- ============================================================
+-- luiza-personal (owner-only dashboard: daily checklist + tasks
+-- someone else assigns to her, e.g. Євгенія — free-text "from", not
+-- a role). No seed data on purpose, same reason as the sysadmin tables.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS luiza_daily_tasks (
+  id SERIAL PRIMARY KEY,
+  text TEXT NOT NULL,
+  done BOOLEAN NOT NULL DEFAULT false,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS luiza_assigned_tasks (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  from_user TEXT,                        -- free text, e.g. "Євгенія" — no login of their own
+  status TEXT NOT NULL DEFAULT 'queued', -- queued | active | done
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_luiza_assigned_tasks_status ON luiza_assigned_tasks(status);
