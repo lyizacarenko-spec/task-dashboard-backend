@@ -187,7 +187,7 @@ app.post('/api/quick-update', requireRole('owner'), async (req, res) => {
 // Accessible to 'owner' (sees everything) and 'sysadmin'
 // (own panel only, same endpoints, same permissions here).
 // ============================================================
-const sysadminRoles = ['owner', 'sysadmin'];
+const sysadminRoles = ['owner', 'sysadmin', 'evgeniya'];
 
 // --- equipment ---
 app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
@@ -356,7 +356,7 @@ app.get('/api/assigned-tasks', requireRole(...sysadminRoles), async (req, res) =
   res.json(r.rows);
 });
 
-app.post('/api/assigned-tasks', requireRole('owner'), async (req, res) => {
+app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { title, from_user } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'title_required' });
   const r = await pool.query(
@@ -389,7 +389,7 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
   res.json(r.rows[0]);
 });
 
-app.delete('/api/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+app.delete('/api/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   await pool.query('DELETE FROM assigned_tasks WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -442,7 +442,7 @@ app.get('/api/luiza/daily-tasks', requireRole('owner', 'evgeniya'), async (req, 
   res.json(r.rows);
 });
 
-app.post('/api/luiza/daily-tasks', requireRole('owner'), async (req, res) => {
+app.post('/api/luiza/daily-tasks', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: 'text_required' });
   const r = await pool.query(
@@ -452,7 +452,7 @@ app.post('/api/luiza/daily-tasks', requireRole('owner'), async (req, res) => {
   res.json(r.rows[0]);
 });
 
-app.patch('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) => {
+app.patch('/api/luiza/daily-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { done, text, completed_at } = req.body;
   if (text !== undefined && !text.trim()) return res.status(400).json({ error: 'text_required' });
   const r = await pool.query(
@@ -478,7 +478,7 @@ app.patch('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) =
   res.json(r.rows[0]);
 });
 
-app.delete('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) => {
+app.delete('/api/luiza/daily-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   await pool.query('DELETE FROM luiza_daily_tasks WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -488,7 +488,7 @@ app.get('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (re
   res.json(r.rows);
 });
 
-app.post('/api/luiza/assigned-tasks', requireRole('owner'), async (req, res) => {
+app.post('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { title, from_user } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'title_required' });
   const r = await pool.query(
@@ -500,7 +500,7 @@ app.post('/api/luiza/assigned-tasks', requireRole('owner'), async (req, res) => 
 
 // status transitions auto-stamp started_at/finished_at unless an explicit
 // override is passed (backdating something that was actually done earlier)
-app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { status, title, from_user, started_at, finished_at } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
@@ -536,7 +536,7 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, res
   res.json(r.rows[0]);
 });
 
-app.delete('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
+app.delete('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   await pool.query('DELETE FROM luiza_assigned_tasks WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -547,7 +547,7 @@ app.get('/api/luiza/projects', requireRole('owner', 'evgeniya'), async (req, res
   res.json(r.rows);
 });
 
-app.post('/api/luiza/projects', requireRole('owner'), async (req, res) => {
+app.post('/api/luiza/projects', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { name, description, repo_url, live_url, tech_stack, status, notes } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
   const r = await pool.query(
@@ -558,7 +558,7 @@ app.post('/api/luiza/projects', requireRole('owner'), async (req, res) => {
   res.json(r.rows[0]);
 });
 
-app.patch('/api/luiza/projects/:id', requireRole('owner'), async (req, res) => {
+app.patch('/api/luiza/projects/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   const { name, description, repo_url, live_url, tech_stack, status, notes } = req.body;
   const r = await pool.query(
     `UPDATE luiza_projects SET
@@ -577,7 +577,7 @@ app.patch('/api/luiza/projects/:id', requireRole('owner'), async (req, res) => {
   res.json(r.rows[0]);
 });
 
-app.delete('/api/luiza/projects/:id', requireRole('owner'), async (req, res) => {
+app.delete('/api/luiza/projects/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
   await pool.query('DELETE FROM luiza_projects WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
