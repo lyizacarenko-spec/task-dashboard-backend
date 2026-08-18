@@ -17,12 +17,14 @@ const pool = new Pool({
 const OWNER_PIN = process.env.OWNER_PIN || '0000';
 const MANAGER_PIN = process.env.MANAGER_PIN || '1111';
 const SYSADMIN_PIN = process.env.SYSADMIN_PIN || '2222';
+const EVGENIYA_PIN = process.env.EVGENIYA_PIN || '3333';
 
 // --- auth: PIN comes in header 'x-pin', resolves to a role ---
 function resolveRole(pin) {
   if (pin === OWNER_PIN) return 'owner';
   if (pin === MANAGER_PIN) return 'manager';
   if (pin === SYSADMIN_PIN) return 'sysadmin';
+  if (pin === EVGENIYA_PIN) return 'evgeniya';
   return null;
 }
 
@@ -435,7 +437,7 @@ app.delete('/api/assets/:id', requireRole(...sysadminRoles), async (req, res) =>
 // tables but a separate pair so the two don't mix.
 // ============================================================
 
-app.get('/api/luiza/daily-tasks', requireRole('owner'), async (req, res) => {
+app.get('/api/luiza/daily-tasks', requireRole('owner', 'evgeniya'), async (req, res) => {
   const r = await pool.query('SELECT * FROM luiza_daily_tasks ORDER BY created_at ASC');
   res.json(r.rows);
 });
@@ -481,7 +483,7 @@ app.delete('/api/luiza/daily-tasks/:id', requireRole('owner'), async (req, res) 
   res.json({ ok: true });
 });
 
-app.get('/api/luiza/assigned-tasks', requireRole('owner'), async (req, res) => {
+app.get('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, res) => {
   const r = await pool.query('SELECT * FROM luiza_assigned_tasks ORDER BY created_at DESC');
   res.json(r.rows);
 });
@@ -540,7 +542,7 @@ app.delete('/api/luiza/assigned-tasks/:id', requireRole('owner'), async (req, re
 });
 
 // --- Luiza's project registry (4th tab, owner-only) ---
-app.get('/api/luiza/projects', requireRole('owner'), async (req, res) => {
+app.get('/api/luiza/projects', requireRole('owner', 'evgeniya'), async (req, res) => {
   const r = await pool.query('SELECT * FROM luiza_projects ORDER BY created_at ASC');
   res.json(r.rows);
 });
