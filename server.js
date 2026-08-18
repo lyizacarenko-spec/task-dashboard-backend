@@ -194,12 +194,15 @@ app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
 });
 
 app.post('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
-  const { cat, name, inv, owner, status, note } = req.body;
+  const { cat, name, inv, owner, status, note, zone } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+  if (zone && !['office', 'warehouse'].includes(zone)) {
+    return res.status(400).json({ error: 'invalid_zone' });
+  }
   const r = await pool.query(
-    `INSERT INTO equipment (cat, name, inv, owner, status, last_check, note)
-     VALUES ($1,$2,$3,$4,$5, CURRENT_DATE, $6) RETURNING *`,
-    [cat || 'other', name.trim(), inv || null, owner || null, status || 'storage', note || null]
+    `INSERT INTO equipment (cat, name, inv, owner, status, last_check, note, zone)
+     VALUES ($1,$2,$3,$4,$5, CURRENT_DATE, $6, $7) RETURNING *`,
+    [cat || 'other', name.trim(), inv || null, owner || null, status || 'storage', note || null, zone || 'warehouse']
   );
   await pool.query(
     'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
@@ -229,7 +232,10 @@ app.patch('/api/equipment/bulk-check', requireRole(...sysadminRoles), async (req
 });
 
 app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { cat, name, inv, owner, status, note, touchLastCheck } = req.body;
+  const { cat, name, inv, owner, status, note, touchLastCheck, zone } = req.body;
+  if (zone && !['office', 'warehouse'].includes(zone)) {
+    return res.status(400).json({ error: 'invalid_zone' });
+  }
   const r = await pool.query(
     `UPDATE equipment SET
        cat = COALESCE($1, cat),
@@ -238,9 +244,10 @@ app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) 
        owner = COALESCE($4, owner),
        status = COALESCE($5, status),
        note = COALESCE($6, note),
-       last_check = CASE WHEN $7 THEN CURRENT_DATE ELSE last_check END
-     WHERE id = $8 RETURNING *`,
-    [cat, name, inv, owner, status, note, !!touchLastCheck, req.params.id]
+       zone = COALESCE($7, zone),
+       last_check = CASE WHEN $8 THEN CURRENT_DATE ELSE last_check END
+     WHERE id = $9 RETURNING *`,
+    [cat, name, inv, owner, status, note, zone, !!touchLastCheck, req.params.id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   if (status) {
@@ -349,6 +356,43 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
 
 app.delete('/api/assigned-tasks/:id', requireRole('owner'), async (req, res) => {
   await pool.query('DELETE FROM assigned_tasks WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// --- generic assets (SIM cards etc.) — type-specific data lives in
+// `fields` (JSONB), so a new asset type is a frontend-only addition ---
+app.get('/api/assets', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM assets ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/assets', requireRole(...sysadminRoles), async (req, res) => {
+  const { type, fields, status, note } = req.body;
+  if (!type || !type.trim()) return res.status(400).json({ error: 'type_required' });
+  const r = await pool.query(
+    `INSERT INTO assets (type, fields, status, note) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [type.trim(), fields || {}, status || 'active', note || null]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/assets/:id', requireRole(...sysadminRoles), async (req, res) => {
+  const { fields, status, note } = req.body;
+  const r = await pool.query(
+    `UPDATE assets SET
+       fields = COALESCE($1, fields),
+       status = COALESCE($2, status),
+       note = COALESCE($3, note),
+       updated_at = now()
+     WHERE id = $4 RETURNING *`,
+    [fields, status, note, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/assets/:id', requireRole(...sysadminRoles), async (req, res) => {
+  await pool.query('DELETE FROM assets WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 

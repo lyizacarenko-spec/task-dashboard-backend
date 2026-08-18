@@ -103,3 +103,29 @@ CREATE INDEX IF NOT EXISTS idx_equipment_log_ts ON equipment_log(ts);
 CREATE INDEX IF NOT EXISTS idx_assigned_tasks_status ON assigned_tasks(status);
 
 -- No INSERT statements here on purpose — see note above.
+
+-- ============================================================
+-- zone split (office vs warehouse) + generic assets (SIM cards etc.)
+-- ============================================================
+
+-- Physical location, distinct from `status`/`owner`. All equipment
+-- loaded so far came from the warehouse stock sheet, so it defaults
+-- to 'warehouse' — office equipment starts empty and gets entered
+-- through the app under the "Офіс" zone.
+ALTER TABLE equipment ADD COLUMN IF NOT EXISTS zone TEXT NOT NULL DEFAULT 'warehouse'; -- office | warehouse
+
+-- Generic asset type for things that aren't physical equipment with a
+-- fixed field set (starting with SIM cards). `fields` holds whatever
+-- the asset type needs (number/operator/assigned_to for a SIM, etc.)
+-- so a new asset type is a frontend-only addition, no migration needed.
+CREATE TABLE IF NOT EXISTS assets (
+  id SERIAL PRIMARY KEY,
+  type TEXT NOT NULL,                       -- 'sim', extensible later
+  fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'active',
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
