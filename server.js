@@ -373,7 +373,7 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
     return res.status(400).json({ error: 'invalid_status' });
   }
   if (title !== undefined) {
-    if (req.role !== 'owner') return res.status(403).json({ error: 'only_owner_can_rename' });
+    if (!['owner', 'evgeniya'].includes(req.role)) return res.status(403).json({ error: 'only_owner_can_rename' });
     if (!title.trim()) return res.status(400).json({ error: 'title_required' });
   }
   const r = await pool.query(
