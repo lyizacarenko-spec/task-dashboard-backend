@@ -181,3 +181,9 @@ CREATE INDEX IF NOT EXISTS idx_luiza_projects_status ON luiza_projects(status);
 -- completion. Editable at any status, not just while active.
 -- ============================================================
 ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS report TEXT;
+
+-- ============================================================
+-- luiza_assigned_tasks report/notes field (ikorka-luiza, "Задачі") —
+-- same pattern as assigned_tasks.report above, editable at any status.
+-- ============================================================
+ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS report TEXT;

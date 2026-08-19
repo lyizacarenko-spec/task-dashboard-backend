@@ -502,7 +502,7 @@ app.post('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (r
 // status transitions auto-stamp started_at/finished_at unless an explicit
 // override is passed (backdating something that was actually done earlier)
 app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
-  const { status, title, from_user, started_at, finished_at } = req.body;
+  const { status, title, from_user, started_at, finished_at, report } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
@@ -520,7 +520,8 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
          WHEN $7 THEN $6
          WHEN $3 = 'done' THEN now()
          ELSE finished_at
-       END
+       END,
+       report = COALESCE($9, report)
      WHERE id = $8 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -531,6 +532,7 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
       finished_at || null,
       finished_at !== undefined,
       req.params.id,
+      report !== undefined ? report : null,
     ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
