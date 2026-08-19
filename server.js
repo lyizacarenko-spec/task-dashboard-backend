@@ -368,7 +368,7 @@ app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, re
 
 // owner can rename the task; both roles can move it through queued/active/done
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { status, title } = req.body;
+  const { status, title, report } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
@@ -380,10 +380,11 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
     `UPDATE assigned_tasks SET
        title = COALESCE($1, title),
        status = COALESCE($2, status),
+       report = COALESCE($3, report),
        started_at = CASE WHEN $2 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
        finished_at = CASE WHEN $2 = 'done' THEN now() ELSE finished_at END
-     WHERE id = $3 RETURNING *`,
-    [title !== undefined ? title.trim() : null, status || null, req.params.id]
+     WHERE id = $4 RETURNING *`,
+    [title !== undefined ? title.trim() : null, status || null, report !== undefined ? report : null, req.params.id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);

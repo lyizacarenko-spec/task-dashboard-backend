@@ -174,3 +174,10 @@ CREATE TABLE IF NOT EXISTS luiza_projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_luiza_projects_status ON luiza_projects(status);
+
+-- ============================================================
+-- assigned_tasks report/notes field (ikorka-sysadmin, "Задачі від
+-- керівника") — sysadmin writes progress/findings, owner reads it after
+-- completion. Editable at any status, not just while active.
+-- ============================================================
+ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS report TEXT;
