@@ -7,6 +7,28 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Every route handler here is `async (req, res) => {...}` with no
+// try/catch. Express 4 does not catch rejected promises from async
+// handlers — a thrown error (e.g. a missing table) just hangs the
+// request until Railway's own proxy times out and substitutes its own
+// fallback response, which has no CORS headers. The browser then sees
+// that as a network failure ("Failed to fetch") instead of a normal
+// error status, and — since several tabs load via Promise.all — one
+// broken table can sink an entire dashboard's load, not just its own
+// tab. Wrapping every route here turns that into a fast, normal JSON
+// 500 with CORS headers intact.
+['get', 'post', 'patch', 'delete'].forEach((method) => {
+  const original = app[method].bind(app);
+  app[method] = (path, ...handlers) => {
+    const wrapped = handlers.map((h) =>
+      typeof h === 'function' && h.constructor.name === 'AsyncFunction'
+        ? (req, res, next) => Promise.resolve(h(req, res, next)).catch(next)
+        : h
+    );
+    return original(path, ...wrapped);
+  };
+});
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
@@ -633,6 +655,15 @@ app.delete('/api/credentials/:id', requireRole(...credentialsRoles), async (req,
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// Catches anything the async-wrapper above forwards via next(err) —
+// runs after cors() has already set the response headers, so the
+// client gets a normal JSON 500 instead of a CORS-less timeout.
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'server_error', message: err.message });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Task dashboard API running on port ${PORT}`));
