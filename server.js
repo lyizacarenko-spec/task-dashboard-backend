@@ -585,6 +585,53 @@ app.delete('/api/luiza/projects/:id', requireRole('owner', 'evgeniya'), async (r
   res.json({ ok: true });
 });
 
+// ============================================================
+// Credentials vault (ikorka-sysadmin, "Паролі") — owner + sysadmin only.
+// Deliberately excludes manager and evgeniya: this is real passwords
+// (ERP/laptops/SIMs/Wi-Fi), not covered by the general sysadminRoles set.
+// Stored in plaintext by explicit decision — masking is frontend-only.
+// ============================================================
+const credentialsRoles = ['owner', 'sysadmin'];
+
+app.get('/api/credentials', requireRole(...credentialsRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM credentials ORDER BY created_at ASC');
+  res.json(r.rows);
+});
+
+app.post('/api/credentials', requireRole(...credentialsRoles), async (req, res) => {
+  const { name, login, password, category, notes, last_changed } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+  const r = await pool.query(
+    `INSERT INTO credentials (name, login, password, category, notes, last_changed)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [name.trim(), login || null, password || null, category || 'other', notes || null, last_changed || null]
+  );
+  res.json(r.rows[0]);
+});
+
+app.patch('/api/credentials/:id', requireRole(...credentialsRoles), async (req, res) => {
+  const { name, login, password, category, notes, last_changed } = req.body;
+  const r = await pool.query(
+    `UPDATE credentials SET
+       name = COALESCE($1, name),
+       login = COALESCE($2, login),
+       password = COALESCE($3, password),
+       category = COALESCE($4, category),
+       notes = COALESCE($5, notes),
+       last_changed = COALESCE($6, last_changed),
+       updated_at = now()
+     WHERE id = $7 RETURNING *`,
+    [name, login, password, category, notes, last_changed, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+});
+
+app.delete('/api/credentials/:id', requireRole(...credentialsRoles), async (req, res) => {
+  await pool.query('DELETE FROM credentials WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;

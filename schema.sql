@@ -187,3 +187,24 @@ ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS report TEXT;
 -- same pattern as assigned_tasks.report above, editable at any status.
 -- ============================================================
 ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS report TEXT;
+
+-- ============================================================
+-- ikorka-sysadmin: credentials/passwords vault (ERP, laptops, SIMs,
+-- Wi-Fi, etc). Stored in plaintext by explicit decision — masked only
+-- on the frontend (show/hide toggle), not encrypted at rest.
+-- Access: owner + sysadmin only (not manager, not evgeniya).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS credentials (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  login TEXT,
+  password TEXT,
+  category TEXT NOT NULL DEFAULT 'other', -- erp | laptop | sim | wifi | other
+  notes TEXT,
+  last_changed DATE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_credentials_category ON credentials(category);
