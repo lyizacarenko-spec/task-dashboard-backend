@@ -61,6 +61,17 @@ function requireRole(...allowed) {
   };
 }
 
+// Set by curl/API calls made to verify a deploy actually works (never by
+// the real frontend, which never sends this header) — the mutation still
+// happens for real, but the automatic equipment_log entry it would
+// normally write is skipped, so ad-hoc verification stops polluting
+// "Тижнева аналітика" with fake status_changed noise. Manual/backdated
+// log entries via POST /api/equipment-log are a deliberate feature and
+// are NOT affected by this — only the automatic ones are.
+function skipLog(req) {
+  return req.header('x-claude-verify') === '1';
+}
+
 // login check (frontend calls this once to know which role it got and store it)
 app.post('/api/login', (req, res) => {
   const { pin } = req.body;
@@ -228,10 +239,12 @@ app.post('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
      VALUES ($1,$2,$3,$4,$5, CURRENT_DATE, $6, $7) RETURNING *`,
     [cat || 'other', name.trim(), inv || null, owner || null, status || 'storage', note || null, zone || 'warehouse']
   );
-  await pool.query(
-    'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
-    ['created', r.rows[0].name, inv || '', req.role]
-  );
+  if (!skipLog(req)) {
+    await pool.query(
+      'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+      ['created', r.rows[0].name, inv || '', req.role]
+    );
+  }
   res.json(r.rows[0]);
 });
 
@@ -248,10 +261,12 @@ app.patch('/api/equipment/bulk-check', requireRole(...sysadminRoles), async (req
     'UPDATE equipment SET last_check = CURRENT_DATE WHERE id = ANY($1::int[]) RETURNING *',
     [ids]
   );
-  await pool.query(
-    'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
-    ['inventory_check', `${r.rows.length} одиниць`, 'Перевірено на місці', req.role]
-  );
+  if (!skipLog(req)) {
+    await pool.query(
+      'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
+      ['inventory_check', `${r.rows.length} одиниць`, 'Перевірено на місці', req.role]
+    );
+  }
   res.json(r.rows);
 });
 
@@ -274,13 +289,13 @@ app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) 
     [cat, name, inv, owner, status, note, zone, !!touchLastCheck, req.params.id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
-  if (status) {
+  if (status && !skipLog(req)) {
     await pool.query(
       'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
       ['status_changed', r.rows[0].name, status, req.role]
     );
   }
-  if (zone) {
+  if (zone && !skipLog(req)) {
     await pool.query(
       'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
       ['zone_changed', r.rows[0].name, zone, req.role]
@@ -291,7 +306,7 @@ app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) 
 
 app.delete('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
   const r = await pool.query('DELETE FROM equipment WHERE id = $1 RETURNING *', [req.params.id]);
-  if (r.rows[0]) {
+  if (r.rows[0] && !skipLog(req)) {
     await pool.query(
       'INSERT INTO equipment_log (action, item, detail, author_role) VALUES ($1,$2,$3,$4)',
       ['deleted', r.rows[0].name, r.rows[0].inv || '', req.role]
