@@ -5,7 +5,10 @@ const { Pool } = require('pg');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Default 100kb is way too small once report_images (base64 screenshots)
+// are in the body — client compresses before sending, but a few photos
+// per task can still add up.
+app.use(express.json({ limit: '15mb' }));
 
 // Every route handler here is `async (req, res) => {...}` with no
 // try/catch. Express 4 does not catch rejected promises from async
@@ -405,7 +408,7 @@ app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, re
 
 // owner can rename the task; both roles can move it through queued/active/done
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { status, title, report } = req.body;
+  const { status, title, report, report_images } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
@@ -413,15 +416,25 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
     if (!['owner', 'evgeniya'].includes(req.role)) return res.status(403).json({ error: 'only_owner_can_rename' });
     if (!title.trim()) return res.status(400).json({ error: 'title_required' });
   }
+  if (report_images !== undefined && !Array.isArray(report_images)) {
+    return res.status(400).json({ error: 'report_images_must_be_array' });
+  }
   const r = await pool.query(
     `UPDATE assigned_tasks SET
        title = COALESCE($1, title),
        status = COALESCE($2, status),
        report = COALESCE($3, report),
+       report_images = COALESCE($5::jsonb, report_images),
        started_at = CASE WHEN $2 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
        finished_at = CASE WHEN $2 = 'done' THEN now() ELSE finished_at END
      WHERE id = $4 RETURNING *`,
-    [title !== undefined ? title.trim() : null, status || null, report !== undefined ? report : null, req.params.id]
+    [
+      title !== undefined ? title.trim() : null,
+      status || null,
+      report !== undefined ? report : null,
+      req.params.id,
+      report_images !== undefined ? JSON.stringify(report_images) : null,
+    ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
@@ -539,9 +552,12 @@ app.post('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (r
 // status transitions auto-stamp started_at/finished_at unless an explicit
 // override is passed (backdating something that was actually done earlier)
 app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
-  const { status, title, from_user, started_at, finished_at, report } = req.body;
+  const { status, title, from_user, started_at, finished_at, report, report_images } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
+  }
+  if (report_images !== undefined && !Array.isArray(report_images)) {
+    return res.status(400).json({ error: 'report_images_must_be_array' });
   }
   const r = await pool.query(
     `UPDATE luiza_assigned_tasks SET
@@ -558,7 +574,8 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
          WHEN $3 = 'done' THEN now()
          ELSE finished_at
        END,
-       report = COALESCE($9, report)
+       report = COALESCE($9, report),
+       report_images = COALESCE($10::jsonb, report_images)
      WHERE id = $8 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -570,6 +587,7 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
       finished_at !== undefined,
       req.params.id,
       report !== undefined ? report : null,
+      report_images !== undefined ? JSON.stringify(report_images) : null,
     ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });

@@ -208,3 +208,13 @@ CREATE TABLE IF NOT EXISTS credentials (
 );
 
 CREATE INDEX IF NOT EXISTS idx_credentials_category ON credentials(category);
+
+-- ============================================================
+-- report_images: screenshots/photos attached to a task's report/notes
+-- (assigned_tasks = ikorka-sysadmin, luiza_assigned_tasks = ikorka-luiza).
+-- Stored as a JSONB array of data: URLs (base64, already compressed
+-- client-side before upload) — same "plaintext, no separate object
+-- storage" tradeoff already made for credentials.password.
+-- ============================================================
+ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS report_images JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS report_images JSONB NOT NULL DEFAULT '[]'::jsonb;
