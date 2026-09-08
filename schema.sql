@@ -218,3 +218,15 @@ CREATE INDEX IF NOT EXISTS idx_credentials_category ON credentials(category);
 -- ============================================================
 ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS report_images JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS report_images JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- ============================================================
+-- attachments: arbitrary files (docs/xlsx/pdf/etc, not just images)
+-- attached to a task's report/notes. Unlike report_images this does NOT
+-- store the file content in Postgres — a PDF/docx can be too big for
+-- that. The file itself lives on disk under UPLOAD_DIR (a Railway
+-- Volume in production — see task-dashboard-backend/CLAUDE.md), and
+-- this column only holds a JSONB array of {url, name, size} pointers
+-- returned by POST /api/upload.
+-- ============================================================
+ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;

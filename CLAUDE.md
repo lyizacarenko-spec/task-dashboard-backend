@@ -75,6 +75,31 @@ assigned_tasks, assets, credentials, projects) при тестуванні — �
 повертаєш значення назад, побічні ефекти (created_at змінних логів
 тощо) можуть лишитись.
 
+## Файлові вкладення (attachments) — окремо від report_images
+`report_images` (скріншоти) — base64 прямо в Postgres, свідомий
+компроміс для маленьких стиснутих картинок. Довільні файли (PDF/docx/
+xlsx тощо) так зберігати не можна — роздує базу. Замість цього:
+- `POST /api/upload` (multipart, поле `file`, роль з `sysadminRoles`)
+  зберігає файл на диску під `UPLOAD_DIR` і повертає `{url, name, size}`.
+- `GET /api/uploads/:filename` віддає файл; авторизація через
+  `?pin=`, бо `<a href download>` не може слати заголовок `x-pin` —
+  той самий компроміс, що й у "Паролях" (внутрішній інструмент, PIN і
+  так усюди в plaintext).
+- Ці `{url, name, size}` кладуться в колонку `attachments` (JSONB-масив)
+  у `assigned_tasks`/`luiza_assigned_tasks` через звичайний PATCH.
+
+**КРИТИЧНО:** `UPLOAD_DIR` (за замовчуванням `./uploads` у корені
+репо) мусить бути на **Railway Volume**, змонтованому в сервіс
+`task-dashboard-backend` — інакше файли зникають при кожному деплої
+(файлова система Railway поза volume ефемерна). Налаштування (робиться
+вручну, не з коду):
+1. Railway → сервіс `task-dashboard-backend` → Settings → Volumes →
+   Add Volume, mount path напр. `/data/uploads`.
+2. Variables → додати `UPLOAD_DIR=/data/uploads`.
+Без цих двох кроків ендпоінт технічно працює (пише у звичайну
+файлову систему контейнера), але вкладення губляться при наступному
+деплої.
+
 ## Важливо при змінах
 - Зміни в `schema.sql` НЕ застосовуються автоматично.
 - Не хардкодити PIN або DATABASE_URL — тільки `process.env`.

@@ -2,6 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -74,6 +78,50 @@ function requireRole(...allowed) {
 function skipLog(req) {
   return req.header('x-claude-verify') === '1';
 }
+
+// --- file attachments (arbitrary docs/PDFs/etc, not base64-in-Postgres
+// like report_images) — stored on disk under UPLOAD_DIR. In production
+// this MUST be a Railway Volume mounted at that path, otherwise every
+// deploy wipes uploaded files (Railway's filesystem is ephemeral
+// outside a mounted volume). See CLAUDE.md. ---
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).slice(0, 20);
+      cb(null, `${crypto.randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for docx/xlsx/pdf
+});
+
+// Any role that can edit a task's report can attach a file to it —
+// same allow-list as assigned-tasks (sysadmin panel) covers both apps.
+app.post('/api/upload', requireRole(...sysadminRoles), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'file_required' });
+  res.json({
+    url: `/api/uploads/${req.file.filename}`,
+    name: req.file.originalname,
+    size: req.file.size,
+  });
+});
+
+// Not a JSON API route (returns the raw file) — auth via ?pin= because
+// plain <a href download> links can't send an x-pin header. Same
+// tradeoff as the credentials vault: this is an internal tool, PIN is
+// already sent in plaintext everywhere else.
+app.get('/api/uploads/:filename', (req, res) => {
+  const role = resolveRole(req.query.pin || req.header('x-pin'));
+  if (!role) return res.status(401).json({ error: 'invalid_pin' });
+  const filename = path.basename(req.params.filename); // no path traversal
+  const filePath = path.join(UPLOAD_DIR, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'not_found' });
+  const displayName = req.query.name ? path.basename(String(req.query.name)) : filename;
+  res.download(filePath, displayName);
+});
 
 // login check (frontend calls this once to know which role it got and store it)
 app.post('/api/login', (req, res) => {
@@ -408,7 +456,7 @@ app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, re
 
 // owner can rename the task; both roles can move it through queued/active/done
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
-  const { status, title, report, report_images } = req.body;
+  const { status, title, report, report_images, attachments } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
@@ -419,12 +467,16 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
   if (report_images !== undefined && !Array.isArray(report_images)) {
     return res.status(400).json({ error: 'report_images_must_be_array' });
   }
+  if (attachments !== undefined && !Array.isArray(attachments)) {
+    return res.status(400).json({ error: 'attachments_must_be_array' });
+  }
   const r = await pool.query(
     `UPDATE assigned_tasks SET
        title = COALESCE($1, title),
        status = COALESCE($2, status),
        report = COALESCE($3, report),
        report_images = COALESCE($5::jsonb, report_images),
+       attachments = COALESCE($6::jsonb, attachments),
        started_at = CASE WHEN $2 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
        finished_at = CASE WHEN $2 = 'done' THEN now() ELSE finished_at END
      WHERE id = $4 RETURNING *`,
@@ -434,6 +486,7 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
       report !== undefined ? report : null,
       req.params.id,
       report_images !== undefined ? JSON.stringify(report_images) : null,
+      attachments !== undefined ? JSON.stringify(attachments) : null,
     ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
@@ -552,12 +605,15 @@ app.post('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (r
 // status transitions auto-stamp started_at/finished_at unless an explicit
 // override is passed (backdating something that was actually done earlier)
 app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
-  const { status, title, from_user, started_at, finished_at, report, report_images } = req.body;
+  const { status, title, from_user, started_at, finished_at, report, report_images, attachments } = req.body;
   if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
   if (report_images !== undefined && !Array.isArray(report_images)) {
     return res.status(400).json({ error: 'report_images_must_be_array' });
+  }
+  if (attachments !== undefined && !Array.isArray(attachments)) {
+    return res.status(400).json({ error: 'attachments_must_be_array' });
   }
   const r = await pool.query(
     `UPDATE luiza_assigned_tasks SET
@@ -575,7 +631,8 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
          ELSE finished_at
        END,
        report = COALESCE($9, report),
-       report_images = COALESCE($10::jsonb, report_images)
+       report_images = COALESCE($10::jsonb, report_images),
+       attachments = COALESCE($11::jsonb, attachments)
      WHERE id = $8 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -588,6 +645,7 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
       req.params.id,
       report !== undefined ? report : null,
       report_images !== undefined ? JSON.stringify(report_images) : null,
+      attachments !== undefined ? JSON.stringify(attachments) : null,
     ]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
