@@ -79,6 +79,13 @@ function skipLog(req) {
   return req.header('x-claude-verify') === '1';
 }
 
+// Declared here (not down by the equipment routes, where it originally
+// lived) because /api/upload below needs it and `const` is not hoisted —
+// referencing it before this line throws ReferenceError at request time
+// (TDZ), which crashed the whole process in production once, so keep
+// this above every route that uses it.
+const sysadminRoles = ['owner', 'sysadmin', 'evgeniya'];
+
 // --- file attachments (arbitrary docs/PDFs/etc, not base64-in-Postgres
 // like report_images) — stored on disk under UPLOAD_DIR. In production
 // this MUST be a Railway Volume mounted at that path, otherwise every
@@ -271,7 +278,6 @@ app.post('/api/quick-update', requireRole('owner'), async (req, res) => {
 // Accessible to 'owner' (sees everything) and 'sysadmin'
 // (own panel only, same endpoints, same permissions here).
 // ============================================================
-const sysadminRoles = ['owner', 'sysadmin', 'evgeniya'];
 
 // --- equipment ---
 app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
