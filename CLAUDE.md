@@ -75,6 +75,21 @@ assigned_tasks, assets, credentials, projects) при тестуванні — �
 повертаєш значення назад, побічні ефекти (created_at змінних логів
 тощо) можуть лишитись.
 
+## Таймтрекінг assigned_tasks / luiza_assigned_tasks (пауза/відновлення)
+Статуси: `queued → active → paused → active → ... → done` (пауза й
+відновлення можна проходити скільки завгодно разів). `started_at` —
+початок ПОТОЧНОЇ сесії (`NULL`, поки задача не активна). `accumulated_seconds`
+— сума вже завершених сесій; на паузу/завершення поточна сесія
+(`now() - started_at`) додається туди, а `started_at` обнуляється
+(paused) або лишається як є разом із `finished_at` (done). При
+відновленні (`paused → active`) `started_at` виставляється в `now()`
+заново — це нова сесія, `accumulated_seconds` не чіпається. Вся ця
+логіка — в JS у PATCH-хендлері (SELECT поточного рядка, потім UPDATE),
+НЕ в SQL CASE, бо потрібен старий `status`, а не тільки старий
+`started_at`. Явний бекдейтинг `started_at`/`finished_at` (луіза-панель,
+`<input type="date">`) завжди має пріоритет над обчисленим значенням і
+не чіпає `accumulated_seconds`.
+
 ## Файлові вкладення (attachments) — окремо від report_images
 `report_images` (скріншоти) — base64 прямо в Postgres, свідомий
 компроміс для маленьких стиснутих картинок. Довільні файли (PDF/docx/
