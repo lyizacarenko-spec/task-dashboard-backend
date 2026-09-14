@@ -232,16 +232,35 @@ ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL D
 ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- ============================================================
--- accumulated_seconds: total worked time across all pause/resume
--- sessions, in seconds. Added alongside the new 'paused' status value
--- (queued -> active -> paused -> active -> ... -> done). While a task is
--- 'active', started_at marks the start of the CURRENT session and the
--- live timer in the UI shows accumulated_seconds + time-since-started_at;
--- pausing folds that session's elapsed time into accumulated_seconds and
--- clears started_at, so the paused interval itself is never counted.
--- Existing rows default to 0 — for tasks completed before this feature
--- existed, the frontend falls back to displaying finished_at - started_at
--- when accumulated_seconds is 0, so their history still shows correctly.
+-- accumulated_seconds / session_started_at: total worked time across all
+-- pause/resume sessions, added alongside the new 'paused' status value
+-- (queued -> active -> paused -> active -> ... -> done).
+--
+-- `started_at` keeps its original meaning (when the task was FIRST taken
+-- into work — set once, shown/backdatable in the UI, never touched by
+-- pause/resume) so that existing "Взято: <date>" display/backdating
+-- keeps working unchanged.
+--
+-- `session_started_at` marks the start of the CURRENT running session —
+-- set to now() on every active-transition (first start AND every
+-- resume-after-pause), cleared to NULL on pause/done. The live timer
+-- while active shows accumulated_seconds + (now - session_started_at);
+-- pausing or finishing folds that interval into accumulated_seconds, so
+-- time spent paused is never counted.
+--
+-- Existing rows default to 0/NULL — the frontend falls back to
+-- finished_at - started_at for tasks completed before this feature
+-- existed (accumulated_seconds = 0), so their history still shows
+-- correctly.
 -- ============================================================
 ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS accumulated_seconds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ;
 ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS accumulated_seconds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ;
+
+-- Backfill: tasks already 'active' before this migration have no
+-- session_started_at yet — seed it from started_at so their live timer
+-- and eventual pause/finish accounting has a sane baseline instead of
+-- treating the whole elapsed history as unstarted.
+UPDATE assigned_tasks SET session_started_at = started_at WHERE status = 'active' AND session_started_at IS NULL;
+UPDATE luiza_assigned_tasks SET session_started_at = started_at WHERE status = 'active' AND session_started_at IS NULL;

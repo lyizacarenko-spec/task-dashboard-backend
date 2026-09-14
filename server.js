@@ -463,12 +463,13 @@ app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, re
 // owner can rename the task; both roles can move it through
 // queued/active/paused/done. Time tracking: `accumulated_seconds` is the
 // sum of all past work sessions (pause/resume doesn't lose time, but the
-// paused interval itself doesn't count as worked). `started_at` marks the
-// start of the CURRENT running session (null while queued or paused) —
-// read it fresh from the DB first so we can fold the just-ended session
-// into accumulated_seconds before overwriting it; can't do this as a
-// single SQL CASE because it needs the pre-update status too, not just
-// the pre-update started_at.
+// paused interval itself doesn't count as worked). `started_at` keeps
+// meaning "when the task was first taken" (untouched by pause/resume);
+// `session_started_at` marks the start of the CURRENT running session
+// (null while queued/paused/done). Read the row fresh first so we can
+// fold the just-ended session into accumulated_seconds before
+// overwriting it — can't do this as a single SQL CASE because it needs
+// the pre-update status too, not just the pre-update timestamp.
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
   const { status, title, report, report_images, attachments } = req.body;
   if (status !== undefined && !['queued', 'active', 'paused', 'done'].includes(status)) {
@@ -489,14 +490,20 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
   const task = current.rows[0];
   if (!task) return res.status(404).json({ error: 'not_found' });
 
-  let { accumulated_seconds, started_at, finished_at } = task;
+  let { accumulated_seconds, started_at, session_started_at, finished_at } = task;
   if (status !== undefined && status !== task.status) {
-    if (task.status === 'active' && task.started_at && (status === 'paused' || status === 'done')) {
-      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.started_at).getTime()) / 1000));
+    if (task.status === 'active' && task.session_started_at && (status === 'paused' || status === 'done')) {
+      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.session_started_at).getTime()) / 1000));
     }
-    if (status === 'active') started_at = new Date(); // fresh session, whether first start or resume-after-pause
-    if (status === 'paused') started_at = null;
-    if (status === 'done') finished_at = new Date();
+    if (status === 'active') {
+      session_started_at = new Date(); // fresh session, whether first start or resume-after-pause
+      if (!started_at) started_at = session_started_at; // first-ever start
+    }
+    if (status === 'paused') session_started_at = null;
+    if (status === 'done') {
+      session_started_at = null;
+      finished_at = new Date();
+    }
   }
 
   const r = await pool.query(
@@ -508,7 +515,8 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
        attachments = COALESCE($6::jsonb, attachments),
        started_at = $7,
        finished_at = $8,
-       accumulated_seconds = $9
+       accumulated_seconds = $9,
+       session_started_at = $10
      WHERE id = $4 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -520,6 +528,7 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
       started_at,
       finished_at,
       accumulated_seconds,
+      session_started_at,
     ]
   );
   res.json(r.rows[0]);
@@ -657,14 +666,20 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
   const task = current.rows[0];
   if (!task) return res.status(404).json({ error: 'not_found' });
 
-  let { accumulated_seconds, started_at, finished_at } = task;
+  let { accumulated_seconds, started_at, session_started_at, finished_at } = task;
   if (status !== undefined && status !== task.status) {
-    if (task.status === 'active' && task.started_at && (status === 'paused' || status === 'done')) {
-      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.started_at).getTime()) / 1000));
+    if (task.status === 'active' && task.session_started_at && (status === 'paused' || status === 'done')) {
+      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.session_started_at).getTime()) / 1000));
     }
-    if (status === 'active') started_at = new Date();
-    if (status === 'paused') started_at = null;
-    if (status === 'done') finished_at = new Date();
+    if (status === 'active') {
+      session_started_at = new Date();
+      if (!started_at) started_at = session_started_at;
+    }
+    if (status === 'paused') session_started_at = null;
+    if (status === 'done') {
+      session_started_at = null;
+      finished_at = new Date();
+    }
   }
   if (startedAtOverride !== undefined) started_at = startedAtOverride;
   if (finishedAtOverride !== undefined) finished_at = finishedAtOverride;
@@ -679,7 +694,8 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
        report = COALESCE($7, report),
        report_images = COALESCE($8::jsonb, report_images),
        attachments = COALESCE($9::jsonb, attachments),
-       accumulated_seconds = $10
+       accumulated_seconds = $10,
+       session_started_at = $11
      WHERE id = $6 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -692,6 +708,7 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
       report_images !== undefined ? JSON.stringify(report_images) : null,
       attachments !== undefined ? JSON.stringify(attachments) : null,
       accumulated_seconds,
+      session_started_at,
     ]
   );
   res.json(r.rows[0]);

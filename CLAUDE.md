@@ -77,18 +77,22 @@ assigned_tasks, assets, credentials, projects) при тестуванні — �
 
 ## Таймтрекінг assigned_tasks / luiza_assigned_tasks (пауза/відновлення)
 Статуси: `queued → active → paused → active → ... → done` (пауза й
-відновлення можна проходити скільки завгодно разів). `started_at` —
-початок ПОТОЧНОЇ сесії (`NULL`, поки задача не активна). `accumulated_seconds`
-— сума вже завершених сесій; на паузу/завершення поточна сесія
-(`now() - started_at`) додається туди, а `started_at` обнуляється
-(paused) або лишається як є разом із `finished_at` (done). При
-відновленні (`paused → active`) `started_at` виставляється в `now()`
-заново — це нова сесія, `accumulated_seconds` не чіпається. Вся ця
-логіка — в JS у PATCH-хендлері (SELECT поточного рядка, потім UPDATE),
-НЕ в SQL CASE, бо потрібен старий `status`, а не тільки старий
-`started_at`. Явний бекдейтинг `started_at`/`finished_at` (луіза-панель,
-`<input type="date">`) завжди має пріоритет над обчисленим значенням і
-не чіпає `accumulated_seconds`.
+відновлення можна проходити скільки завгодно разів).
+- `started_at` — коли задачу взяли в роботу ВПЕРШЕ. Виставляється один
+  раз, ніколи не чіпається паузою/відновленням — саме це поле показує й
+  дає бекдейтити UI («Взято: <дата>»).
+- `session_started_at` — початок ПОТОЧНОЇ сесії роботи (`NULL`, поки
+  задача не `active`). Виставляється в `now()` на кожному переході в
+  `active` (і перший старт, і кожне відновлення після паузи).
+- `accumulated_seconds` — сума вже завершених сесій. На паузу/завершення
+  поточна сесія (`now() - session_started_at`) додається сюди, і
+  `session_started_at` обнуляється.
+Живий таймер (поки `active`) = `accumulated_seconds + (now - session_started_at)`.
+На паузі показуємо просто `accumulated_seconds`. Уся ця логіка — в JS у
+PATCH-хендлері (SELECT поточного рядка, потім UPDATE), НЕ в SQL CASE, бо
+потрібен старий `status`, а не тільки старі таймстемпи. Явний бекдейтинг
+`started_at`/`finished_at` (луіза-панель, `<input type="date">`) завжди
+має пріоритет над обчисленим значенням і не чіпає `accumulated_seconds`.
 
 ## Файлові вкладення (attachments) — окремо від report_images
 `report_images` (скріншоти) — base64 прямо в Postgres, свідомий
