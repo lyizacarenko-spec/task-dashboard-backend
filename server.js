@@ -460,10 +460,18 @@ app.post('/api/assigned-tasks', requireRole('owner', 'evgeniya'), async (req, re
   res.json(r.rows[0]);
 });
 
-// owner can rename the task; both roles can move it through queued/active/done
+// owner can rename the task; both roles can move it through
+// queued/active/paused/done. Time tracking: `accumulated_seconds` is the
+// sum of all past work sessions (pause/resume doesn't lose time, but the
+// paused interval itself doesn't count as worked). `started_at` marks the
+// start of the CURRENT running session (null while queued or paused) —
+// read it fresh from the DB first so we can fold the just-ended session
+// into accumulated_seconds before overwriting it; can't do this as a
+// single SQL CASE because it needs the pre-update status too, not just
+// the pre-update started_at.
 app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, res) => {
   const { status, title, report, report_images, attachments } = req.body;
-  if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
+  if (status !== undefined && !['queued', 'active', 'paused', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
   if (title !== undefined) {
@@ -476,6 +484,21 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
   if (attachments !== undefined && !Array.isArray(attachments)) {
     return res.status(400).json({ error: 'attachments_must_be_array' });
   }
+
+  const current = await pool.query('SELECT * FROM assigned_tasks WHERE id = $1', [req.params.id]);
+  const task = current.rows[0];
+  if (!task) return res.status(404).json({ error: 'not_found' });
+
+  let { accumulated_seconds, started_at, finished_at } = task;
+  if (status !== undefined && status !== task.status) {
+    if (task.status === 'active' && task.started_at && (status === 'paused' || status === 'done')) {
+      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.started_at).getTime()) / 1000));
+    }
+    if (status === 'active') started_at = new Date(); // fresh session, whether first start or resume-after-pause
+    if (status === 'paused') started_at = null;
+    if (status === 'done') finished_at = new Date();
+  }
+
   const r = await pool.query(
     `UPDATE assigned_tasks SET
        title = COALESCE($1, title),
@@ -483,8 +506,9 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
        report = COALESCE($3, report),
        report_images = COALESCE($5::jsonb, report_images),
        attachments = COALESCE($6::jsonb, attachments),
-       started_at = CASE WHEN $2 = 'active' AND started_at IS NULL THEN now() ELSE started_at END,
-       finished_at = CASE WHEN $2 = 'done' THEN now() ELSE finished_at END
+       started_at = $7,
+       finished_at = $8,
+       accumulated_seconds = $9
      WHERE id = $4 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
@@ -493,9 +517,11 @@ app.patch('/api/assigned-tasks/:id', requireRole(...sysadminRoles), async (req, 
       req.params.id,
       report_images !== undefined ? JSON.stringify(report_images) : null,
       attachments !== undefined ? JSON.stringify(attachments) : null,
+      started_at,
+      finished_at,
+      accumulated_seconds,
     ]
   );
-  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
 });
 
@@ -608,11 +634,16 @@ app.post('/api/luiza/assigned-tasks', requireRole('owner', 'evgeniya'), async (r
   res.json(r.rows[0]);
 });
 
-// status transitions auto-stamp started_at/finished_at unless an explicit
-// override is passed (backdating something that was actually done earlier)
+// Status transitions auto-stamp started_at/finished_at and roll worked
+// time into accumulated_seconds — same model as /api/assigned-tasks, see
+// the comment there. An explicit started_at/finished_at override (the
+// <input type="date"> backdating fields in the UI) always wins over the
+// computed value, same priority as before this feature; it does NOT
+// touch accumulated_seconds, since backdating is editing an already-known
+// boundary, not living through a real pause.
 app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), async (req, res) => {
-  const { status, title, from_user, started_at, finished_at, report, report_images, attachments } = req.body;
-  if (status !== undefined && !['queued', 'active', 'done'].includes(status)) {
+  const { status, title, from_user, started_at: startedAtOverride, finished_at: finishedAtOverride, report, report_images, attachments } = req.body;
+  if (status !== undefined && !['queued', 'active', 'paused', 'done'].includes(status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
   if (report_images !== undefined && !Array.isArray(report_images)) {
@@ -621,40 +652,48 @@ app.patch('/api/luiza/assigned-tasks/:id', requireRole('owner', 'evgeniya'), asy
   if (attachments !== undefined && !Array.isArray(attachments)) {
     return res.status(400).json({ error: 'attachments_must_be_array' });
   }
+
+  const current = await pool.query('SELECT * FROM luiza_assigned_tasks WHERE id = $1', [req.params.id]);
+  const task = current.rows[0];
+  if (!task) return res.status(404).json({ error: 'not_found' });
+
+  let { accumulated_seconds, started_at, finished_at } = task;
+  if (status !== undefined && status !== task.status) {
+    if (task.status === 'active' && task.started_at && (status === 'paused' || status === 'done')) {
+      accumulated_seconds += Math.max(0, Math.floor((Date.now() - new Date(task.started_at).getTime()) / 1000));
+    }
+    if (status === 'active') started_at = new Date();
+    if (status === 'paused') started_at = null;
+    if (status === 'done') finished_at = new Date();
+  }
+  if (startedAtOverride !== undefined) started_at = startedAtOverride;
+  if (finishedAtOverride !== undefined) finished_at = finishedAtOverride;
+
   const r = await pool.query(
     `UPDATE luiza_assigned_tasks SET
        title = COALESCE($1, title),
        from_user = COALESCE($2, from_user),
        status = COALESCE($3, status),
-       started_at = CASE
-         WHEN $5 THEN $4
-         WHEN $3 = 'active' AND started_at IS NULL THEN now()
-         ELSE started_at
-       END,
-       finished_at = CASE
-         WHEN $7 THEN $6
-         WHEN $3 = 'done' THEN now()
-         ELSE finished_at
-       END,
-       report = COALESCE($9, report),
-       report_images = COALESCE($10::jsonb, report_images),
-       attachments = COALESCE($11::jsonb, attachments)
-     WHERE id = $8 RETURNING *`,
+       started_at = $4,
+       finished_at = $5,
+       report = COALESCE($7, report),
+       report_images = COALESCE($8::jsonb, report_images),
+       attachments = COALESCE($9::jsonb, attachments),
+       accumulated_seconds = $10
+     WHERE id = $6 RETURNING *`,
     [
       title !== undefined ? title.trim() : null,
       from_user !== undefined ? from_user : null,
       status || null,
-      started_at || null,
-      started_at !== undefined,
-      finished_at || null,
-      finished_at !== undefined,
+      started_at,
+      finished_at,
       req.params.id,
       report !== undefined ? report : null,
       report_images !== undefined ? JSON.stringify(report_images) : null,
       attachments !== undefined ? JSON.stringify(attachments) : null,
+      accumulated_seconds,
     ]
   );
-  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
 });
 

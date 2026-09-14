@@ -230,3 +230,18 @@ ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS report_images JSONB NO
 -- ============================================================
 ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- ============================================================
+-- accumulated_seconds: total worked time across all pause/resume
+-- sessions, in seconds. Added alongside the new 'paused' status value
+-- (queued -> active -> paused -> active -> ... -> done). While a task is
+-- 'active', started_at marks the start of the CURRENT session and the
+-- live timer in the UI shows accumulated_seconds + time-since-started_at;
+-- pausing folds that session's elapsed time into accumulated_seconds and
+-- clears started_at, so the paused interval itself is never counted.
+-- Existing rows default to 0 — for tasks completed before this feature
+-- existed, the frontend falls back to displaying finished_at - started_at
+-- when accumulated_seconds is 0, so their history still shows correctly.
+-- ============================================================
+ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS accumulated_seconds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS accumulated_seconds INTEGER NOT NULL DEFAULT 0;
