@@ -264,3 +264,32 @@ ALTER TABLE luiza_assigned_tasks ADD COLUMN IF NOT EXISTS session_started_at TIM
 -- treating the whole elapsed history as unstarted.
 UPDATE assigned_tasks SET session_started_at = started_at WHERE status = 'active' AND session_started_at IS NULL;
 UPDATE luiza_assigned_tasks SET session_started_at = started_at WHERE status = 'active' AND session_started_at IS NULL;
+
+-- ============================================================
+-- locations: equipment.zone used to be a hardcoded 2-value enum
+-- ('office' | 'warehouse') checked inline in server.js. Adding a third
+-- location (Вінниця) is the trigger to make this a real table instead —
+-- from now on a new location is a data row (INSERT below), not a code
+-- change: no backend/frontend edit or redeploy needed, same manual-SQL
+-- convention as everything else in this file. `id` is the slug stored
+-- in equipment.zone (unchanged column/values for office/warehouse, so
+-- existing rows need no backfill); `name` is the Ukrainian display
+-- label; `sort_order` controls the left-to-right order of the zone
+-- filter tabs in ikorka-sysadmin.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS locations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO locations (id, name, sort_order) VALUES
+  ('warehouse', 'Склад', 1),
+  ('office', 'Офіс', 2),
+  ('vinnytsia', 'Вінниця', 3)
+ON CONFLICT (id) DO NOTHING;
+
+-- No equipment rows get zone = 'vinnytsia' here on purpose — the branch
+-- is empty, inventory hasn't been done there yet (per the request that
+-- added this table). Equipment gets entered through the app as usual.

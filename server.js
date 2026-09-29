@@ -279,6 +279,20 @@ app.post('/api/quick-update', requireRole('owner'), async (req, res) => {
 // (own panel only, same endpoints, same permissions here).
 // ============================================================
 
+// --- locations (equipment zones) — a real table instead of a hardcoded
+// enum, specifically so a new branch/location is a data row (INSERT in
+// schema.sql, run manually like every other migration) rather than a
+// code change here or in the frontend. ---
+app.get('/api/locations', requireRole(...sysadminRoles), async (req, res) => {
+  const r = await pool.query('SELECT * FROM locations ORDER BY sort_order ASC');
+  res.json(r.rows);
+});
+
+async function isValidZone(zone) {
+  const r = await pool.query('SELECT 1 FROM locations WHERE id = $1', [zone]);
+  return r.rows.length > 0;
+}
+
 // --- equipment ---
 app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
   const r = await pool.query('SELECT * FROM equipment ORDER BY created_at ASC');
@@ -288,7 +302,7 @@ app.get('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
 app.post('/api/equipment', requireRole(...sysadminRoles), async (req, res) => {
   const { cat, name, inv, owner, status, note, zone } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
-  if (zone && !['office', 'warehouse'].includes(zone)) {
+  if (zone && !(await isValidZone(zone))) {
     return res.status(400).json({ error: 'invalid_zone' });
   }
   const r = await pool.query(
@@ -329,7 +343,7 @@ app.patch('/api/equipment/bulk-check', requireRole(...sysadminRoles), async (req
 
 app.patch('/api/equipment/:id', requireRole(...sysadminRoles), async (req, res) => {
   const { cat, name, inv, owner, status, note, touchLastCheck, zone } = req.body;
-  if (zone && !['office', 'warehouse'].includes(zone)) {
+  if (zone && !(await isValidZone(zone))) {
     return res.status(400).json({ error: 'invalid_zone' });
   }
   const r = await pool.query(
