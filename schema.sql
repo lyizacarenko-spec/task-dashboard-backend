@@ -290,6 +290,11 @@ INSERT INTO locations (id, name, sort_order) VALUES
   ('vinnytsia', 'Вінниця', 3)
 ON CONFLICT (id) DO NOTHING;
 
+-- credentials.location: which site a password belongs to ('dnipro' |
+-- 'vinnytsia', validated in server.js). Existing rows become 'dnipro'
+-- via the DEFAULT. Idempotent.
+ALTER TABLE credentials ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT 'dnipro';
+
 -- No equipment rows get zone = 'vinnytsia' here on purpose — the branch
 -- is empty, inventory hasn't been done there yet (per the request that
 -- added this table). Equipment gets entered through the app as usual.

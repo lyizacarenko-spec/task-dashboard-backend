@@ -782,24 +782,43 @@ app.delete('/api/luiza/projects/:id', requireRole('owner', 'evgeniya'), async (r
 // ============================================================
 const credentialsRoles = ['owner', 'sysadmin'];
 
+// Credential locations are the two sites passwords are kept for
+// (Дніпро / Вінниця). Deliberately NOT the `locations` table: that one is
+// equipment zones (warehouse/office/vinnytsia) and has no 'dnipro' row —
+// reusing it would either need a fake 'dnipro' equipment zone or leave
+// the default value invalid. 'vinnytsia' is the same slug in both.
+const CREDENTIAL_LOCATIONS = ['dnipro', 'vinnytsia'];
+
 app.get('/api/credentials', requireRole(...credentialsRoles), async (req, res) => {
-  const r = await pool.query('SELECT * FROM credentials ORDER BY created_at ASC');
+  const { location } = req.query;
+  if (location !== undefined && !CREDENTIAL_LOCATIONS.includes(location)) {
+    return res.status(400).json({ error: 'invalid_location' });
+  }
+  const r = location
+    ? await pool.query('SELECT * FROM credentials WHERE location = $1 ORDER BY created_at ASC', [location])
+    : await pool.query('SELECT * FROM credentials ORDER BY created_at ASC');
   res.json(r.rows);
 });
 
 app.post('/api/credentials', requireRole(...credentialsRoles), async (req, res) => {
-  const { name, login, password, category, notes, last_changed } = req.body;
+  const { name, login, password, category, notes, last_changed, location } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+  if (location !== undefined && !CREDENTIAL_LOCATIONS.includes(location)) {
+    return res.status(400).json({ error: 'invalid_location' });
+  }
   const r = await pool.query(
-    `INSERT INTO credentials (name, login, password, category, notes, last_changed)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [name.trim(), login || null, password || null, category || 'other', notes || null, last_changed || null]
+    `INSERT INTO credentials (name, login, password, category, notes, last_changed, location)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [name.trim(), login || null, password || null, category || 'other', notes || null, last_changed || null, location || 'dnipro']
   );
   res.json(r.rows[0]);
 });
 
 app.patch('/api/credentials/:id', requireRole(...credentialsRoles), async (req, res) => {
-  const { name, login, password, category, notes, last_changed } = req.body;
+  const { name, login, password, category, notes, last_changed, location } = req.body;
+  if (location !== undefined && !CREDENTIAL_LOCATIONS.includes(location)) {
+    return res.status(400).json({ error: 'invalid_location' });
+  }
   const r = await pool.query(
     `UPDATE credentials SET
        name = COALESCE($1, name),
@@ -808,9 +827,10 @@ app.patch('/api/credentials/:id', requireRole(...credentialsRoles), async (req, 
        category = COALESCE($4, category),
        notes = COALESCE($5, notes),
        last_changed = COALESCE($6, last_changed),
+       location = COALESCE($8, location),
        updated_at = now()
      WHERE id = $7 RETURNING *`,
-    [name, login, password, category, notes, last_changed, req.params.id]
+    [name, login, password, category, notes, last_changed, req.params.id, location]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
   res.json(r.rows[0]);
